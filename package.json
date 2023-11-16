@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "A small library that allows us to create custom html elements with reactivity powered by signals",
   "main": "index.js",
+  "sideEffects": false,
   "scripts": {
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
