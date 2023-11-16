@@ -4,6 +4,7 @@
   "description": "A small library that allows us to create custom html elements with reactivity powered by signals",
   "main": "index.js",
   "scripts": {
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -25,5 +26,8 @@
   "bugs": {
     "url": "https://github.com/RsMan-Dev/reactive_custom_elements/issues"
   },
-  "homepage": "https://github.com/RsMan-Dev/reactive_custom_elements#readme"
+  "homepage": "https://github.com/RsMan-Dev/reactive_custom_elements#readme",
+  "dependencies": {
+    "typescript": "^5.2.2"
+  }
 }
