@@ -1,1 +1,1 @@
-export { default as ReactiveCustomElement } from "./src/reactive_custom_element";
+export { default } from "./src/reactive_custom_element";
