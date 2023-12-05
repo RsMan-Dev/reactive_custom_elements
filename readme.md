@@ -253,7 +253,7 @@ import ReactiveCustomElement, {tag} from 'reactive_custom_elements';
 class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     render(){
-      return (
+      return this.createTree(
         <div
           onclick={() => this.count.val++}
           data-count={() => this.count.val}
