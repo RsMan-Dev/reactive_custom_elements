@@ -1,17 +1,19 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.div = exports.tag = void 0;
-function tag(tagName, attributes = {}, ...children) {
-    return {
-        tagName,
-        attributes,
-        children,
-    };
+exports.keyedTag = exports.tag = void 0;
+function tag(tag, attrs, ...children) {
+    if (attrs && typeof attrs.key == "string") {
+        return keyedTag(attrs.key, tag, attrs, ...children);
+    }
+    else if (!attrs || !attrs.key) {
+        return { tag, attrs: attrs ?? {}, children };
+    }
+    else {
+        throw new Error("key must be a string");
+    }
 }
 exports.tag = tag;
-function div(attributes = {}, ...children) {
-    return tag("div", attributes, ...children);
+function keyedTag(key, tag, attrs = {}, ...children) {
+    return { key, tag, attrs, children };
 }
-exports.div = div;
-const test = tag("div", { class: "test" }, "hello world", div({}, "zd", tag("test")));
-const hello = test.children;
+exports.keyedTag = keyedTag;

@@ -6,7 +6,6 @@
     "declaration": true,
     "outDir": "./dist",
 
-
     /* Linting */
     "strict": true,
     "noFallthroughCasesInSwitch": true
