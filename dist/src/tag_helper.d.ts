@@ -5,7 +5,7 @@ export type EventAttributeMap = {
     [evName in keyof HTMLElementEventMap as `on${evName}`]?: (ev: HTMLElementEventMap[evName]) => void;
 };
 export type AttributeMap = EventAttributeMap & {
-    [attrName: string]: Initializer<string | boolean | number | null | undefined> | ((..._: any) => void);
+    [attrName in string]?: Initializer<string | boolean | number | null | undefined> | ((..._: any) => void);
 };
 export type KeyedAttributeMap<K extends string | undefined> = {
     key?: K;

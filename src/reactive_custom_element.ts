@@ -44,8 +44,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   
   // bind effect to node if any
   _beia(node: Node){
-    if(this._cec)
-      (node._be ||= []).push(this._cec)
+    if(this._cec) {
+      node._be ||= []
+      node._be.push(this._cec)
+    }
   }
 
   effect(callback: EffectCallback){
@@ -56,10 +58,11 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
   #signal<T>(
     _value: Initializer<Signal<T, Element> | T>,
-    depends_on?: Signal<any, Element>[],
+    _depends_on?: Initializer<Signal<any, Element>[]>,
     signal: Signal<T, typeof this> = {} as Signal<T, typeof this>
   ): Signal<T, typeof this> {
     const value = typeof _value === "function" ? (_value as () => T | Signal<T, Element>)() : _value;
+    const depends_on = typeof _depends_on === "function" ? (_depends_on as () => Signal<any, Element>[] | undefined)() : _depends_on;
     const spe = ():never => {throw new Error("Signal parent must contain or be the signal child to avoid memory leaks")}
 
     // if value is a signal for example, a signal from a parent component
@@ -147,7 +150,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     return signal;
   }
 
-  signal<T>(value: Initializer<Signal<T, Element> | T>, depends_on?: Signal<any, Element>[]) {
+  signal<T>(value: Initializer<Signal<T, Element> | T>, depends_on?: Initializer<Signal<any, Element>[]>) : Signal<T, typeof this> {
     const e = (): never => {
       throw new Error("Signal not initialized yet, wait for init() to be called")
     };
@@ -184,7 +187,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     this._mo = new MutationObserver((muts) => {
       for(const mut of muts)
         for(const node of mut.removedNodes)
-          if (node._be) this.forgetEffectsRegistration(node._be);
+          if (node._be) {
+            if(window["rce_verbose" as any]) console.log("forgetting effects registration for: ", node, node._be);
+            this.forgetEffectsRegistration(node._be);
+          }
     });
     this._mo.observe(this, {childList: true, subtree: true})
   }
@@ -204,7 +210,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   createTree<K extends ElementTagName>(desc: ArrayOr<ChildrenInitializer<K>>, parent?: HTMLElement) : undefined | (Text | HTMLElement)[] {
     if(typeof desc === "function") {
       let els: Record<string | number, Text | HTMLElement> = {};
-      this.effect(() => {
+      const _eff = () => {
         const res = desc();
         if(Array.isArray(res)){
           for (const el of res) {
@@ -214,6 +220,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
           const allKeys = res.map(el => el.key.toString());
           for(const key of Object.keys(els)){
             if(!allKeys.includes(key)) {
+              if(els[key]._be) this.forgetEffectsRegistration(els[key]._be!)
               els[key].remove();
               delete els[key];
             }
@@ -224,6 +231,11 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
             const isAfterKey: string | undefined = allKeys[allKeys.indexOf(el.key.toString())-1];
             if(!els[el.key]){
               els[el.key] = this.createTree(el)[0];
+              if(els[el.key]._be) {
+                // removes this effect from the element because if the element is removed, the effect is removed too
+                // and other childs of the element will not be updated
+                els[el.key]._be = els[el.key]._be!.filter(cb => cb != _eff);
+              }
               if(isBeforeKey){
                 const nextEl = els[isBeforeKey];
                 if(nextEl) nextEl.before(els[el.key]);
@@ -236,19 +248,30 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
             } else {
               // replaces element only if tag names are different
               if(els[el.key].nodeName !== el.tag.toUpperCase()) {
+                if(els[el.key]._be) this.forgetEffectsRegistration(els[el.key]._be!)
                 els[el.key].replaceWith(this.createTree(el)[0]);
+                if(els[el.key]._be) {
+                  // removes this effect from the element because if the element is removed, the effect is removed too
+                  // and other childs of the element will not be updated
+                  els[el.key]._be = els[el.key]._be!.filter(cb => cb != _eff);
+                }
               }
             }
           }
         } else if (res === undefined || res === null) {
           for (const key of Object.keys(els)) {
+            if(els[key]._be) this.forgetEffectsRegistration(els[key]._be!)
             els[key].remove();
             delete els[key];
           }
         } else if (typeof res !== "object") {
           if(!els[""]){
             els[""] = document.createTextNode(res.toString());
-            this._beia(els[""]);
+            if(els[""]._be) {
+              // removes this effect from the element because if the element is removed, the effect is removed too
+              // and other childs of the element will not be updated
+              els[""]._be = els[""]._be.filter(cb => cb != _eff);
+            }
             parent?.appendChild(els[""]);
           } else {
             els[""].textContent = res.toString();
@@ -256,14 +279,26 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
         } else {
           if(!els[""]){
             parent?.appendChild(els[""] = this.createTree(res)[0]);
+            if(els[""]._be) {
+              // removes this effect from the element because if the element is removed, the effect is removed too
+              // and other childs of the element will not be updated
+              els[""]._be = els[""]._be.filter(cb => cb != _eff);
+            }
           } else {
             // replaces element only if tag names are different
             if(els[""].nodeName !== res.tag.toUpperCase()) {
+              if(els[""]._be) this.forgetEffectsRegistration(els[""]._be)
               els[""].replaceWith(this.createTree(res)[0]);
+              if(els[""]._be) {
+                // removes this effect from the element because if the element is removed, the effect is removed too
+                // and other childs of the element will not be updated
+                els[""]._be = els[""]._be.filter(cb => cb != _eff);
+              }
             }
           }
         }
-      })
+      }
+      this.effect(_eff);
       if(!(parent instanceof HTMLElement)) return Object.values(els);
     }else if(desc === undefined || desc === null){
       // do nothing avoid toString() to be called on undefined
@@ -279,7 +314,6 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       const {tag, attrs, children} = desc;
       const el = document.createElement(tag);
       this._beia(el);
-      parent?.appendChild(el);
 
       if(attrs)
         Object.entries(attrs).forEach(([key, value]) => {
@@ -290,11 +324,16 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
           }
 
           if(typeof value === "function") {
-            this.effect(() => {
-              el.setAttribute(key, value(null)?.toString() || "")
-            })
+            const _attr_eff = () => {
+              el.setAttribute(key, value(undefined)?.toString() || "")
+              el._be ||= [];
+              el._be.push(_attr_eff)
+            }
+            this.effect(_attr_eff)
           } else el.setAttribute(key, value?.toString() || "")
         })
+
+      parent?.appendChild(el);
 
       children.forEach(child => {
         this.createTree(child, el)

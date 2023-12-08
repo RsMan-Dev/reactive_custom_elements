@@ -14,26 +14,29 @@ class ReactiveCustomElement extends HTMLElement {
         super(...arguments);
         _ReactiveCustomElement_instances.add(this);
         // connected callback called
-        this.__ccc = false;
+        this._ccc = false;
         // signals to init when connected callback is called
-        this.__sti = [];
+        this._sti = [];
         // signal clear effect callbacks, used to clear an effect from signal effects
-        this.__scea = [];
+        this._scea = [];
     }
     static tag(tagName, attrs = {}, ...children) { return (0, tag_helper_1.tag)(tagName, attrs, ...children); }
     forgetEffectsRegistration(callbacks) {
-        for (const clearEffectCb of this.__scea)
+        for (const clearEffectCb of this._scea)
             for (const cb of callbacks)
                 clearEffectCb(cb);
     }
-    bindEffectIfAny(node) {
-        if (this.__cec)
-            (node.__be || (node.__be = [])).push(this.__cec);
+    // bind effect to node if any
+    _beia(node) {
+        if (this._cec) {
+            node._be || (node._be = []);
+            node._be.push(this._cec);
+        }
     }
     effect(callback) {
-        this.__cec = callback;
+        this._cec = callback;
         callback();
-        this.__cec = undefined;
+        this._cec = undefined;
     }
     signal(value, depends_on) {
         const e = () => {
@@ -48,11 +51,11 @@ class ReactiveCustomElement extends HTMLElement {
             unOmitCallback(_) { e(); },
             get parent() { return e(); }
         };
-        if (this.__ccc) {
+        if (this._ccc) {
             __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value, depends_on, signal);
         }
         else {
-            this.__sti.push(() => {
+            this._sti.push(() => {
                 __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value, depends_on, signal);
             });
         }
@@ -60,19 +63,22 @@ class ReactiveCustomElement extends HTMLElement {
     }
     // ts-ignore => this value is used by the browser
     connectedCallback() {
-        this.__ccc = true;
-        this.__sti.forEach(signal => signal());
+        this._ccc = true;
+        this._sti.forEach(signal => signal());
         this.connect();
         const els = this.render();
         els.forEach(el => this.appendChild(el));
         this.postRender(els);
-        this.__mo = new MutationObserver((muts) => {
+        this._mo = new MutationObserver((muts) => {
             for (const mut of muts)
                 for (const node of mut.removedNodes)
-                    if (node.__be)
-                        this.forgetEffectsRegistration(node.__be);
+                    if (node._be) {
+                        if (window["rce_verbose"])
+                            console.log("forgetting effects registration for: ", node, node._be);
+                        this.forgetEffectsRegistration(node._be);
+                    }
         });
-        this.__mo.observe(this, { childList: true, subtree: true });
+        this._mo.observe(this, { childList: true, subtree: true });
     }
     // ts-ignore => this value is used by the browser
     disconnectedCallback() {
@@ -85,7 +91,7 @@ class ReactiveCustomElement extends HTMLElement {
     createTree(desc, parent) {
         if (typeof desc === "function") {
             let els = {};
-            this.effect(() => {
+            const _eff = () => {
                 const res = desc();
                 if (Array.isArray(res)) {
                     for (const el of res) {
@@ -95,6 +101,8 @@ class ReactiveCustomElement extends HTMLElement {
                     const allKeys = res.map(el => el.key.toString());
                     for (const key of Object.keys(els)) {
                         if (!allKeys.includes(key)) {
+                            if (els[key]._be)
+                                this.forgetEffectsRegistration(els[key]._be);
                             els[key].remove();
                             delete els[key];
                         }
@@ -104,6 +112,11 @@ class ReactiveCustomElement extends HTMLElement {
                         const isAfterKey = allKeys[allKeys.indexOf(el.key.toString()) - 1];
                         if (!els[el.key]) {
                             els[el.key] = this.createTree(el)[0];
+                            if (els[el.key]._be) {
+                                // removes this effect from the element because if the element is removed, the effect is removed too
+                                // and other childs of the element will not be updated
+                                els[el.key]._be = els[el.key]._be.filter(cb => cb != _eff);
+                            }
                             if (isBeforeKey) {
                                 const nextEl = els[isBeforeKey];
                                 if (nextEl)
@@ -124,13 +137,22 @@ class ReactiveCustomElement extends HTMLElement {
                         else {
                             // replaces element only if tag names are different
                             if (els[el.key].nodeName !== el.tag.toUpperCase()) {
+                                if (els[el.key]._be)
+                                    this.forgetEffectsRegistration(els[el.key]._be);
                                 els[el.key].replaceWith(this.createTree(el)[0]);
+                                if (els[el.key]._be) {
+                                    // removes this effect from the element because if the element is removed, the effect is removed too
+                                    // and other childs of the element will not be updated
+                                    els[el.key]._be = els[el.key]._be.filter(cb => cb != _eff);
+                                }
                             }
                         }
                     }
                 }
                 else if (res === undefined || res === null) {
                     for (const key of Object.keys(els)) {
+                        if (els[key]._be)
+                            this.forgetEffectsRegistration(els[key]._be);
                         els[key].remove();
                         delete els[key];
                     }
@@ -138,7 +160,11 @@ class ReactiveCustomElement extends HTMLElement {
                 else if (typeof res !== "object") {
                     if (!els[""]) {
                         els[""] = document.createTextNode(res.toString());
-                        this.bindEffectIfAny(els[""]);
+                        if (els[""]._be) {
+                            // removes this effect from the element because if the element is removed, the effect is removed too
+                            // and other childs of the element will not be updated
+                            els[""]._be = els[""]._be.filter(cb => cb != _eff);
+                        }
                         parent?.appendChild(els[""]);
                     }
                     else {
@@ -148,15 +174,28 @@ class ReactiveCustomElement extends HTMLElement {
                 else {
                     if (!els[""]) {
                         parent?.appendChild(els[""] = this.createTree(res)[0]);
+                        if (els[""]._be) {
+                            // removes this effect from the element because if the element is removed, the effect is removed too
+                            // and other childs of the element will not be updated
+                            els[""]._be = els[""]._be.filter(cb => cb != _eff);
+                        }
                     }
                     else {
                         // replaces element only if tag names are different
                         if (els[""].nodeName !== res.tag.toUpperCase()) {
+                            if (els[""]._be)
+                                this.forgetEffectsRegistration(els[""]._be);
                             els[""].replaceWith(this.createTree(res)[0]);
+                            if (els[""]._be) {
+                                // removes this effect from the element because if the element is removed, the effect is removed too
+                                // and other childs of the element will not be updated
+                                els[""]._be = els[""]._be.filter(cb => cb != _eff);
+                            }
                         }
                     }
                 }
-            });
+            };
+            this.effect(_eff);
             if (!(parent instanceof HTMLElement))
                 return Object.values(els);
         }
@@ -165,7 +204,7 @@ class ReactiveCustomElement extends HTMLElement {
         }
         else if (typeof desc !== "object") {
             const el = document.createTextNode(desc.toString());
-            this.bindEffectIfAny(el);
+            this._beia(el);
             parent?.appendChild(el);
             if (!(parent instanceof HTMLElement))
                 return [el];
@@ -178,8 +217,7 @@ class ReactiveCustomElement extends HTMLElement {
         else {
             const { tag, attrs, children } = desc;
             const el = document.createElement(tag);
-            this.bindEffectIfAny(el);
-            parent?.appendChild(el);
+            this._beia(el);
             if (attrs)
                 Object.entries(attrs).forEach(([key, value]) => {
                     if (key.startsWith("on") && typeof value === "function") {
@@ -188,13 +226,17 @@ class ReactiveCustomElement extends HTMLElement {
                         return;
                     }
                     if (typeof value === "function") {
-                        this.effect(() => {
-                            el.setAttribute(key, value(null)?.toString() || "");
-                        });
+                        const _attr_eff = () => {
+                            el.setAttribute(key, value(undefined)?.toString() || "");
+                            el._be || (el._be = []);
+                            el._be.push(_attr_eff);
+                        };
+                        this.effect(_attr_eff);
                     }
                     else
                         el.setAttribute(key, value?.toString() || "");
                 });
+            parent?.appendChild(el);
             children.forEach(child => {
                 this.createTree(child, el);
             });
@@ -203,8 +245,10 @@ class ReactiveCustomElement extends HTMLElement {
         }
     }
 }
-_ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal = function _ReactiveCustomElement_signal(_value, depends_on, signal = {}) {
+_ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal = function _ReactiveCustomElement_signal(_value, _depends_on, signal = {}) {
     const value = typeof _value === "function" ? _value() : _value;
+    const depends_on = typeof _depends_on === "function" ? _depends_on() : _depends_on;
+    const spe = () => { throw new Error("Signal parent must contain or be the signal child to avoid memory leaks"); };
     // if value is a signal for example, a signal from a parent component
     if (value != null &&
         typeof value == 'object' &&
@@ -213,9 +257,8 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         'addDependant' in value &&
         'omitCallback' in value &&
         'unOmitCallback' in value) {
-        if (!value.parent.contains(this) &&
-            value.parent != this)
-            throw new Error("Signal parent must contain or be the signal child to avoid memory leaks");
+        if (!value.parent.contains(this) && value.parent != this)
+            return spe();
         const _signal = __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value.val, depends_on?.filter(dep => dep != value), signal);
         const cb = () => {
             _signal.omitCallback(rcb);
@@ -229,8 +272,8 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         };
         value.addDependant(cb);
         _signal.addDependant(rcb);
-        this.__be || (this.__be = []);
-        this.__be.push(cb);
+        this._be || (this._be = []);
+        this._be.push(cb);
         return _signal;
     }
     const _data = {
@@ -242,62 +285,43 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         if (typeof _value !== "function")
             throw new Error("depends_on can only be used with a function initializer");
         for (const dep of depends_on) {
-            if (!dep.parent.contains(this) &&
-                dep.parent != this)
-                throw new Error("Signal parent must contain or be the signal child to avoid memory leaks");
+            if (!dep.parent.contains(this) && dep.parent != this)
+                return spe();
         }
         const cb = () => { signal.val = _value(); };
         for (const dep of depends_on)
             dep.addDependant(cb);
-        this.__be || (this.__be = []);
-        this.__be.push(cb);
+        this._be || (this._be = []);
+        this._be.push(cb);
     }
-    this.__scea.push((cb) => {
+    this._scea.push((cb) => {
         _data.dependants.delete(cb);
         _data.omittedCallbacks.delete(cb);
     });
-    Object.defineProperty(signal, "val", {
-        get: function () {
-            if (this.__cec)
-                _data.dependants.add(this.__cec);
-            return _data.value;
-        }.bind(this),
-        set: function (newValue) {
-            _data.value = newValue;
-            _data.dependants.forEach(dep => {
+    Object.entries({
+        val: {
+            get: function () {
+                if (this._cec)
+                    _data.dependants.add(this._cec);
+                return _data.value;
+            }.bind(this),
+            set: function (newValue) {
+                _data.value = newValue;
+                _data.dependants.forEach(dep => {
+                    if (_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep))
+                        dep();
+                });
+            }.bind(this)
+        },
+        omitCallback: { value: (dep) => _data.omittedCallbacks.add(dep) },
+        unOmitCallback: { value: (dep) => _data.omittedCallbacks.delete(dep) },
+        callDependants: { value: () => _data.dependants.forEach(dep => {
                 if (_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep))
                     dep();
-            });
-        }.bind(this)
-    });
-    Object.defineProperty(signal, "omitCallback", {
-        value: function (dep) {
-            _data.omittedCallbacks.add(dep);
-        }
-    });
-    Object.defineProperty(signal, "unOmitCallback", {
-        value: function (dep) {
-            _data.omittedCallbacks.delete(dep);
-        }
-    });
-    Object.defineProperty(signal, "callDependants", {
-        value: function () {
-            _data.dependants.forEach(dep => {
-                if (_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep))
-                    dep();
-            });
-        }
-    });
-    Object.defineProperty(signal, "addDependant", {
-        value: function (dep) {
-            _data.dependants.add(dep);
-        }
-    });
-    Object.defineProperty(signal, "parent", {
-        get: function () {
-            return this;
-        }.bind(this)
-    });
+            }) },
+        addDependant: { value: (dep) => _data.dependants.add(dep) },
+        parent: { get: function () { return this; }.bind(this) }
+    }).forEach(([key, value]) => Object.defineProperty(signal, key, value));
     return signal;
 };
 exports.default = ReactiveCustomElement;
