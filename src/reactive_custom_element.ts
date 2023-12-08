@@ -1,4 +1,4 @@
-import {tag, ChildrenInitializer, ElementTagName, AttributeMap, Initializer} from "./tag_helper";
+import {tag, ChildrenInitializer, ElementTagName, AttributeMap, Initializer, ArrayOr} from "./tag_helper";
 import "./jsx"
 
 type EffectCallback = () => (void | (() => void));
@@ -200,8 +200,8 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
   postRender(_rendered: Node[]) {};
 
-  createTree<K extends ElementTagName>(desc: ChildrenInitializer<K>, parent?: HTMLElement) : typeof parent extends HTMLElement ? undefined : (Text | HTMLElement)[]
-  createTree<K extends ElementTagName>(desc: ChildrenInitializer<K>, parent?: HTMLElement) : undefined | (Text | HTMLElement)[] {
+  createTree<K extends ElementTagName>(desc: ArrayOr<ChildrenInitializer<K>>, parent?: HTMLElement) : typeof parent extends HTMLElement ? undefined : (Text | HTMLElement)[]
+  createTree<K extends ElementTagName>(desc: ArrayOr<ChildrenInitializer<K>>, parent?: HTMLElement) : undefined | (Text | HTMLElement)[] {
     if(typeof desc === "function") {
       let els: Record<string | number, Text | HTMLElement> = {};
       this.effect(() => {
