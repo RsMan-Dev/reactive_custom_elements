@@ -3,7 +3,7 @@ import {
     ChildrenInitializer,
     ElementTagName,
     KeyedAttributeMap,
-    TagDescriptor
+    TagDescriptorWithKey
 } from "./tag_helper";
 
 declare global{
@@ -11,7 +11,7 @@ declare global{
         type IntrinsicElements = {
             [elemName in keyof AllElementTagNameMap]: KeyedAttributeMap<string | undefined>;
         };
-        type Element = TagDescriptor<ElementTagName, ChildrenInitializer<ElementTagName>[]>
+        type Element = TagDescriptorWithKey<ElementTagName, ChildrenInitializer<ElementTagName>[]>
     }
 }
 
