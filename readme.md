@@ -207,7 +207,7 @@ Rendering is done with `this.createTree()`, it takes `TagDescriptor` as argument
 
 Now let's see some examples:
 ```js
-import ReactiveCustomElement, {tag, tagWithKey} from 'reactive_custom_elements';
+import ReactiveCustomElement, {tag} from 'reactive_custom_elements';
 class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     render(){
@@ -242,7 +242,7 @@ class MyElement extends ReactiveCustomElement {
 Jsx is supported, but no fragment support yet, as i wanted to allow using
 other libraries like react, solid, etc, the way you use jsx in this library
 is telling jsx in each file to use the `tag()` function above import statements.
-this works with my personal tests, using --tsx: react | preserve, feel free
+this works with my personal tests, using --jsx: react | preserve, feel free
 to make an issue if you find any problems, or make a pull request if you want
 to add fragment support, or any other feature. the above example can be written 
 like this:
@@ -253,7 +253,7 @@ import ReactiveCustomElement, {tag} from 'reactive_custom_elements';
 class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     render(){
-      return (
+      return this.createTree(
         <div
           onclick={() => this.count.val++}
           data-count={() => this.count.val}
