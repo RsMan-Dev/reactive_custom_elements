@@ -1,4 +1,12 @@
-import {tag, ChildrenInitializer, ElementTagName, AttributeMap, Initializer, ArrayOr} from "./tag_helper";
+import {
+  tag,
+  ChildrenInitializer,
+  ElementTagName,
+  AttributeMap,
+  Initializer,
+  ArrayOr,
+  TagDescriptor, TagDescriptorWithKey
+} from "./tag_helper";
 import "./jsx"
 
 type EffectCallback = () => (void | (() => void));
@@ -8,6 +16,7 @@ export type Signal<T, P extends Element> = {
   val: T,
   callDependants: () => void,
   addDependant: (dep: EffectCallback) => void,
+  forgetDependant: (dep: EffectCallback) => void,
   omitCallback: (dep: EffectCallback) => void,
   unOmitCallback: (dep: EffectCallback) => void,
   get parent(): P
@@ -27,6 +36,8 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   private _ccc = false;
   // signals to init when connected callback is called
   private _sti: (() => void)[] = [];
+  // disposed
+  private _d = false;
   // mutation observer to clear effects when node is removed
   _mo!: MutationObserver;
   // signal clear effect callbacks, used to clear an effect from signal effects
@@ -95,14 +106,19 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       }
       value.addDependant(cb);
       _signal.addDependant(rcb);
+
+      this._scea.push((cb: EffectCallback) => {
+        value.forgetDependant(cb);
+        _signal.forgetDependant(rcb);
+      })
+
       this._be ||= [];
       this._be.push(cb);
-
 
       return _signal;
     }
 
-    const _data = {
+    const _d = {
       value: value,
       dependants: new Set<EffectCallback>(),
       omittedCallbacks: new Set<EffectCallback>(),
@@ -117,34 +133,42 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
       for(const dep of depends_on) dep.addDependant(cb);
 
+      this._scea.push((cb: EffectCallback) => {
+        for(const dep of depends_on) dep.forgetDependant(cb);
+      })
+
       this._be ||= [];
       this._be.push(cb);
     }
 
     this._scea.push((cb: EffectCallback) => {
-      _data.dependants.delete(cb);
-      _data.omittedCallbacks.delete(cb);
+      _d.dependants.delete(cb);
+      _d.omittedCallbacks.delete(cb);
     })
 
     Object.entries({
       val: {
         get: function(this: ReactiveCustomElement){
-          if (this._cec) _data.dependants.add(this._cec);
-          return _data.value;
+          if (this._cec) _d.dependants.add(this._cec);
+          return _d.value;
         }.bind(this),
         set: function(this: ReactiveCustomElement, newValue: T){
-          _data.value = newValue;
-          _data.dependants.forEach(dep => {
-            if(_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep)) dep();
+          _d.value = newValue;
+          _d.dependants.forEach(dep => {
+            if(_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
           })
         }.bind(this)
       },
-      omitCallback: {value: (dep: EffectCallback) => _data.omittedCallbacks.add(dep)},
-      unOmitCallback: {value: (dep: EffectCallback) => _data.omittedCallbacks.delete(dep)},
-      callDependants: {value: () => _data.dependants.forEach(dep => {
-        if(_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep)) dep();
+      omitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.add(dep)},
+      unOmitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.delete(dep)},
+      callDependants: {value: () => _d.dependants.forEach(dep => {
+        if(_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
       })},
-      addDependant: {value: (dep: EffectCallback) => _data.dependants.add(dep)},
+      addDependant: {value: (dep: EffectCallback) => _d.dependants.add(dep)},
+      forgetDependant: {value: (dep: EffectCallback) => {
+          _d.dependants.delete(dep);
+          _d.omittedCallbacks.delete(dep);
+        }},
       parent: {get: function(this: ReactiveCustomElement){return this}.bind(this)}
     }).forEach(([key, value]) => Object.defineProperty(signal, key, value))
     return signal;
@@ -159,6 +183,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       set val(_: T) {e()},
       callDependants() {e()},
       addDependant(_: EffectCallback) {e()},
+      forgetDependant(_: EffectCallback) {e()},
       omitCallback(_: EffectCallback) {e()},
       unOmitCallback(_: EffectCallback) {e()},
       get parent(){return e()}
@@ -197,6 +222,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
   // ts-ignore => this value is used by the browser
   private disconnectedCallback(){
+    this._d = true;
+    this.forgetEffectsRegistration(this._be || []);
+    this._mo.disconnect();
+    this._scea.length = 0;
     this.disconnect()
   }
 
@@ -213,11 +242,14 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       const _eff = () => {
         const res = desc();
         if(Array.isArray(res)){
-          for (const el of res) {
+          const resNoFalse =
+            res.filter(el => el !== false) as Exclude<TagDescriptorWithKey<string, ChildrenInitializer<string>[]>, false>[]
+
+          for (const el of resNoFalse) {
             if(!el.key) throw new Error("Array of elements into a function must have a key as the number of elements may change");
           }
 
-          const allKeys = res.map(el => el.key.toString());
+          const allKeys = resNoFalse.map(el => el.key.toString());
           for(const key of Object.keys(els)){
             if(!allKeys.includes(key)) {
               if(els[key]._be) this.forgetEffectsRegistration(els[key]._be!)
@@ -226,7 +258,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
             }
           }
 
-          for (const el of res) {
+          for (const el of resNoFalse) {
             const isBeforeKey: string | undefined = allKeys[allKeys.indexOf(el.key.toString())+1];
             const isAfterKey: string | undefined = allKeys[allKeys.indexOf(el.key.toString())-1];
             if(!els[el.key]){
@@ -258,7 +290,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
               }
             }
           }
-        } else if (res === undefined || res === null) {
+        } else if (res === undefined || res === null || res === false) {
           for (const key of Object.keys(els)) {
             if(els[key]._be) this.forgetEffectsRegistration(els[key]._be!)
             els[key].remove();
@@ -300,7 +332,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       }
       this.effect(_eff);
       if(!(parent instanceof HTMLElement)) return Object.values(els);
-    }else if(desc === undefined || desc === null){
+    }else if(desc === undefined || desc === null || desc === false){
       // do nothing avoid toString() to be called on undefined
     }else if(typeof desc !== "object"){
       const el = document.createTextNode(desc.toString());
@@ -325,7 +357,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
           if(typeof value === "function") {
             const _attr_eff = () => {
-              el.setAttribute(key, value(undefined)?.toString() || "")
+              this.setElAttr(el, key, value(undefined)?.toString())
               el._be ||= [];
               el._be.push(_attr_eff)
             }
@@ -341,5 +373,22 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
       if(!(parent instanceof HTMLElement)) return [el];
     }
+  }
+
+  setElAttr(el: HTMLElement, attr: string, value: string | undefined){
+    if(attr == "checked"){
+      const is = ![undefined, "false", "0", "null", "undefined", false, 0, null].includes(value);
+      if(is) {
+        el.setAttribute(attr, "");
+        if(attr in el) el[attr] = true;
+      } else {
+        el.removeAttribute(attr);
+        if(attr in el) el[attr] = false;
+      }
+      return;
+    }
+
+    if(value === undefined || value === null) el.removeAttribute(attr);
+    else el.setAttribute(attr, value);
   }
 }

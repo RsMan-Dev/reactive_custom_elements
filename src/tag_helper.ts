@@ -18,9 +18,9 @@ export type TagDescriptor<K extends ElementTagName, Children extends ChildrenIni
   tag: K,
   attrs?: AttributeMap,
   children: Children,
-}
+} | false
 export type TagDescriptorWithKey<K extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]> =
-  TagDescriptor<K, Children> & { key: string | number };
+  Exclude<TagDescriptor<K, Children>, false> & { key: string | number } | false;
 export type StringOrTagDescriptor<T extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]> = TagDescriptor<T, Children> | string;
 
 export type ChildrenInitializer<T extends ElementTagName> =
