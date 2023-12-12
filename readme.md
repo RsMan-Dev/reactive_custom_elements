@@ -64,7 +64,7 @@ import ReactiveCustomElement from 'reactive_custom_elements';
 class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     connected() {
-        console.log(count.val); // 0
+        console.log(this.count.val); // 0
     }
 }
 ```
@@ -81,11 +81,11 @@ class MyElement extends ReactiveCustomElement {
     count2 = this.signal(0);
     count3 = this.signal(() => this.count.val + this.count2.val, [this.count, this.count2]);
     connected() {
-        console.log(count3.val); // 0
+        console.log(this.count3.val); // 0
         this.count.val = 1;
-        console.log(count3.val); // 1
+        console.log(this.count3.val); // 1
         this.count2.val = 2;
-        console.log(count3.val); // 3
+        console.log(this.count3.val); // 3
     }
 }
 ```
@@ -135,12 +135,12 @@ class MyElement extends ReactiveCustomElement {
     hello = this.signal({hello: "world"});
     count = this.signal(0);
     connected() {
-       hello.val.hello = "world2"; // this will not update dependants
-       hello.callDependants(); // this will update dependants
-       hello.val = {hello: "world3"}; // this will update dependants
-       count.val; // this will not update dependants
-       count.val = 1; // this will update dependants
-       count.val++; // this will update dependants
+       this.hello.val.hello = "world2"; // this will not update dependants
+       this.hello.callDependants(); // this will update dependants
+       this.hello.val = {hello: "world3"}; // this will update dependants
+       this.count.val; // this will not update dependants
+       this.count.val = 1; // this will update dependants
+       this.count.val++; // this will update dependants
     }
 }
 ```
@@ -158,7 +158,7 @@ class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     connected() {
         this.effect(() => {
-            console.log(count.val);
+            console.log(this.count.val);
         });
         this.count.val = 1; // console => 1
         this.count.val = 2; // console => 2
@@ -247,7 +247,7 @@ to make an issue if you find any problems, or make a pull request if you want
 to add fragment support, or any other feature. the above example can be written 
 like this:
 ```js
-/** @jsx tag */
+/** @jsx tag */ // => can be omitted if jsxFactory is set to "tag" into config
 import ReactiveCustomElement, {tag} from 'reactive_custom_elements';
 
 class MyElement extends ReactiveCustomElement {
