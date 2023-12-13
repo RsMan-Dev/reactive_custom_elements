@@ -125,9 +125,9 @@ when elements are created in javascript, and then added to the DOM.
 
 Signals will call its dependents (explained later) when its value is updated.
 note that signals are only updated when its setter is called, so if you want
-to update a signal, you need to call its setter, or use `signal.callDependants()`.
+to update a signal, you need to call its setter, or use `signal.callDeps()`.
 so if you want to save performance by not always doing a shallow copy of the
-value, you can use `signal.callDependants()` to update dependants without.
+value, you can use `signal.callDeps()` to update dependants without.
 Example:
 ```js
 import ReactiveCustomElement from 'reactive_custom_elements';
@@ -136,7 +136,7 @@ class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     connected() {
        this.hello.val.hello = "world2"; // this will not update dependants
-       this.hello.callDependants(); // this will update dependants
+       this.hello.callDeps(); // this will update dependants
        this.hello.val = {hello: "world3"}; // this will update dependants
        this.count.val; // this will not update dependants
        this.count.val = 1; // this will update dependants
@@ -144,6 +144,21 @@ class MyElement extends ReactiveCustomElement {
     }
 }
 ```
+`Signals<T>` provides these methods:
+- `val: T` - The value of the signal. (getter and setter)
+- `callDeps(): void` - Call dependants of the signal.
+- `addDep(callback: () => void): void` - Add a callback to be called when the signal is updated.
+- `forgetDep(callback: () => void): void` - Remove a callback from the signal.
+- `omitDep(callback: () => void): void` - Set a callback to be ignored when the signal is updated.
+- `unomitDep(callback: () => void): void` - Remove a callback from the ignored callbacks.
+- `readonly parent: ReactiveCustomElement` - The parent element of the signal.
+- `identifier: object` - The identifier of the signal, used to identify the signal when `debug` is true. Attributes of the object:
+  * `message: string` - Some infos about the identifier.
+  * `var_name?: string` - The name of the variable into where the signal is stored. (got using files info on stack trace, may be not found)
+  * `component?: string` - The name of the component where the signal was created.
+  * `fromFile?: string` - The url of the file where the signal was created.
+  * `fromLine?: number` - The line number of the file where the signal was created.
+  * `fromColumn?: number` - The column number of the file where the signal was created.
 
 ### Effects
 Effects are used to call a function when a signal used in the function is updated.
@@ -169,10 +184,10 @@ class MyElement extends ReactiveCustomElement {
 ### Attributes
 The `ReactiveCustomElement` class provides `this.attribute()` to bind element attributes
 as signals.
-`this.attribute()` takes 3 arguments:
+`this.attribute<T>()` takes 3 arguments:
 - `name: string` - The name of the attribute to bind.
-- `parse?: (value: string) => any` - A function to parse the attribute value to the signal value.
-- `stringify?: (value: any) => string` - A function to stringify the signal value to the attribute value.
+- `parse?: (value: string) => T` - A function to parse the attribute value to the signal value.
+- `stringify?: (value: T) => string` - A function to stringify the signal value to the attribute value.
 
 Example:
 ```js
