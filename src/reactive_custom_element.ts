@@ -15,11 +15,11 @@ type EffectCallback = () => (void | (() => void));
 
 export type Signal<T, P extends Element> = {
   val: T,
-  callDependants: () => void,
-  addDependant: (dep: EffectCallback) => void,
-  forgetDependant: (dep: EffectCallback) => void,
-  omitCallback: (dep: EffectCallback) => void,
-  unOmitCallback: (dep: EffectCallback) => void,
+  callDeps: () => void,
+  addDep: (dep: EffectCallback) => void,
+  forgetDep: (dep: EffectCallback) => void,
+  omitDep: (dep: EffectCallback) => void,
+  unOmitDep: (dep: EffectCallback) => void,
   get parent(): P,
   identifier: SignalIdentifier
 }
@@ -41,6 +41,8 @@ type SignalIdentifier = {
 
 // noinspection JSUnusedLocalSymbols, JSUnusedGlobalSymbols used when overriding, or by browser
 export default abstract class ReactiveCustomElement extends HTMLElement{
+  // observed attributes
+  private observedAttributes?: string[];
   // current effect callback
   private _cec?: EffectCallback;
   // connected callback called
@@ -53,6 +55,8 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   _mo!: MutationObserver;
   // signal clear effect callbacks, used to clear an effect from signal effects
   _scea: ((cb: EffectCallback) => void)[] = [];
+  // attribute change callback
+  private _acc: { [key: string]: (newValue: string | null) => void } = {};
 
   debug = false;
 
@@ -95,10 +99,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       value != null &&
       typeof value == 'object' &&
       'val' in value &&
-      'callDependants' in value &&
-      'addDependant' in value &&
-      'omitCallback' in value &&
-      'unOmitCallback' in value
+      'callDeps' in value &&
+      'addDep' in value &&
+      'omitDep' in value &&
+      'unOmitDep' in value
     ) {
       if(!value.parent.contains(this) && value.parent != this) return spe();
 
@@ -110,21 +114,21 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       );
 
       const cb = () => {
-        _signal.omitCallback(rcb);
+        _signal.omitDep(rcb);
         _signal.val = value.val;
-        _signal.unOmitCallback(rcb);
+        _signal.unOmitDep(rcb);
       }
       const rcb = () => {
-        value.omitCallback(cb);
+        value.omitDep(cb);
         value.val = _signal.val;
-        value.unOmitCallback(cb);
+        value.unOmitDep(cb);
       }
-      value.addDependant(cb);
-      _signal.addDependant(rcb);
+      value.addDep(cb);
+      _signal.addDep(rcb);
 
       this._scea.push((cb: EffectCallback) => {
-        value.forgetDependant(cb);
-        _signal.forgetDependant(rcb);
+        value.forgetDep(cb);
+        _signal.forgetDep(rcb);
       })
 
       this._be ||= [];
@@ -146,10 +150,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       }
       const cb = () => {signal.val = (_value as () => T)();}
 
-      for(const dep of depends_on) dep.addDependant(cb);
+      for(const dep of depends_on) dep.addDep(cb);
 
       this._scea.push((cb: EffectCallback) => {
-        for(const dep of depends_on) dep.forgetDependant(cb);
+        for(const dep of depends_on) dep.forgetDep(cb);
       })
 
       this._be ||= [];
@@ -168,6 +172,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
           return _d.value;
         }.bind(this),
         set: function(this: ReactiveCustomElement, newValue: T){
+          if(_d.value === newValue) return;
           _d.value = newValue;
           if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
           _d.dependants.forEach(dep => {
@@ -175,16 +180,16 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
           })
         }.bind(this)
       },
-      omitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.add(dep)},
-      unOmitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.delete(dep)},
-      callDependants: {value: () => {
+      omitDep: {value: (dep: EffectCallback) => _d.omittedCallbacks.add(dep)},
+      unOmitDep: {value: (dep: EffectCallback) => _d.omittedCallbacks.delete(dep)},
+      callDeps: {value: () => {
           if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
           _d.dependants.forEach(dep => {
             if (_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
           })
         }},
-      addDependant: {value: (dep: EffectCallback) => _d.dependants.add(dep)},
-      forgetDependant: {value: (dep: EffectCallback) => {
+      addDep: {value: (dep: EffectCallback) => _d.dependants.add(dep)},
+      forgetDep: {value: (dep: EffectCallback) => {
           _d.dependants.delete(dep);
           _d.omittedCallbacks.delete(dep);
         }},
@@ -224,11 +229,11 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     const signal = {
       get val(){return e()},
       set val(_: T) {e()},
-      callDependants() {e()},
-      addDependant(_: EffectCallback) {e()},
-      forgetDependant(_: EffectCallback) {e()},
-      omitCallback(_: EffectCallback) {e()},
-      unOmitCallback(_: EffectCallback) {e()},
+      callDeps() {e()},
+      addDep(_: EffectCallback) {e()},
+      forgetDep(_: EffectCallback) {e()},
+      omitDep(_: EffectCallback) {e()},
+      unOmitDep(_: EffectCallback) {e()},
       get parent(){return e()},
       identifier: identifier
     } as Signal<T, typeof this>
@@ -244,6 +249,43 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     return signal;
   }
 
+  attribute<T extends any = string | undefined | null>(
+    name: string,
+    parse?: (value?: string | null) => T,
+    stringify?: (value: T) => string
+  ) {
+    this.observedAttributes ||= [];
+    this.observedAttributes.push(name);
+    parse ||= (value?: string | null) => value as T;
+    stringify ||= (value: T) => (value as any).toString();
+    const s = this.signal<T>(() => parse!(this.getAttribute(name)))
+
+    const _i = () => {
+      let justSet = false;
+      const cb = () => {
+        justSet = true;
+        if(s.val === undefined || s.val === null) this.removeAttribute(name)
+        else this.setAttribute(name, stringify!(s.val))
+      };
+      s.addDep(cb);
+
+      const ccb = (value?: string | null) => {
+        if(justSet) {
+          justSet = false;
+          return;
+        }
+        const r = parse!(value);
+        s.omitDep(cb);
+        s.val = r;
+        s.unOmitDep(cb);
+      }
+      this._acc[name] = ccb;
+    }
+    if(this._ccc) { _i() } else { this._sti.push(_i) }
+
+    return s;
+  }
+
   // ts-ignore => this value is used by the browser
   private connectedCallback(){
     if(this.debug) console.warn("Debug is enabled on component", this.constructor.name, "it may slow down the application, and spam the console");
@@ -257,14 +299,24 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     this.postRender(els);
 
     this._mo = new MutationObserver((muts) => {
-      for(const mut of muts)
-        for(const node of mut.removedNodes)
-          if (node._be) {
-            if(this.debug) console.log("forgetting effects registration for: ", node, node._be);
-            this.forgetEffectsRegistration(node._be);
-          }
+      for(const mut of muts) {
+        switch (mut.type) {
+          case "childList":
+            if(mut.addedNodes.length > 0)
+              for (const node of mut.addedNodes)
+                if (node._be) {
+                  if (this.debug) console.log("registering effects for: ", node, node._be);
+                  node._be.forEach(cb => cb());
+                }
+            break;
+          case "attributes":
+            if(mut.attributeName && mut.target == this && this.observedAttributes?.includes(mut.attributeName))
+              this._acc[mut.attributeName]?.(this.getAttribute(mut.attributeName));
+            break;
+        }
+      }
     });
-    this._mo.observe(this, {childList: true, subtree: true})
+    this._mo.observe(this, {childList: true, subtree: true, attributes: true})
   }
 
   // ts-ignore => this value is used by the browser

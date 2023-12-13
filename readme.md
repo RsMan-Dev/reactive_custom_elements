@@ -166,6 +166,36 @@ class MyElement extends ReactiveCustomElement {
 }
 ```
 
+### Attributes
+The `ReactiveCustomElement` class provides `this.attribute()` to bind element attributes
+as signals.
+`this.attribute()` takes 3 arguments:
+- `name: string` - The name of the attribute to bind.
+- `parse?: (value: string) => any` - A function to parse the attribute value to the signal value.
+- `stringify?: (value: any) => string` - A function to stringify the signal value to the attribute value.
+
+Example:
+```js
+import ReactiveCustomElement from 'reactive_custom_elements';
+class MyElement extends ReactiveCustomElement {
+    count = this.attribute("count", 
+      (value) => parseInt(value), 
+      (value) => value.toString()
+    );
+    connected() {
+        console.log(this.count.val); // 0
+        this.count.val = 1;
+        console.log(this.count.val); // 1
+        console.log(this.getAttribute("count")); // "1"
+        this.setAttribute("count", "2");
+        console.log(this.count.val); // 1 => this way, the attribute value is set 
+                                     // asynchronusly, so the signal value is not 
+                                     // updated yet, use effect to track attribute
+        console.log(this.getAttribute("count")); // "2"
+    }
+}
+```
+
 ### Rendering
 Rendering will run only one time when the element is added to the DOM, only effects
 created during rendering will cause updates. so be sure you understand how signals
@@ -279,5 +309,11 @@ register the custom element into `HTMLElementTagNameMap`:
 ```ts
 declare global { interface HTMLElementTagNameMap { "my-element": MyElement } }
 ```
+
+### Debuging
+The `ReactiveCustomElement` class contains a `debug` property, which is a boolean.
+as soon as it is set to true, the library will log many debug infos to the console.
+it is recommended to set it to true only when needed, as it will slow down the library,
+and spam an absurd amount of logs to the console.
 
 
