@@ -8,6 +8,7 @@ import {
   TagDescriptor, TagDescriptorWithKey
 } from "./tag_helper";
 import "./jsx"
+import StackTrace from "stacktrace-js";
 
 type EffectCallback = () => (void | (() => void));
 
@@ -19,13 +20,23 @@ export type Signal<T, P extends Element> = {
   forgetDependant: (dep: EffectCallback) => void,
   omitCallback: (dep: EffectCallback) => void,
   unOmitCallback: (dep: EffectCallback) => void,
-  get parent(): P
+  get parent(): P,
+  identifier: SignalIdentifier
 }
 declare global{
   interface Node{
     // bound effects
     _be?: EffectCallback[];
   }
+}
+
+type SignalIdentifier = {
+  message: string,
+  var_name?: string,
+  component?: string,
+  fromFile?: string,
+  fromLine?: number,
+  fromColumn?: number,
 }
 
 // noinspection JSUnusedLocalSymbols, JSUnusedGlobalSymbols used when overriding, or by browser
@@ -42,6 +53,8 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   _mo!: MutationObserver;
   // signal clear effect callbacks, used to clear an effect from signal effects
   _scea: ((cb: EffectCallback) => void)[] = [];
+
+  debug = false;
 
   static tag<K extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]>
     (tagName: K, attrs: AttributeMap = {}, ...children: [...Children])
@@ -68,9 +81,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   }
 
   #signal<T>(
+    identifier: SignalIdentifier,
     _value: Initializer<Signal<T, Element> | T>,
     _depends_on?: Initializer<Signal<any, Element>[]>,
-    signal: Signal<T, typeof this> = {} as Signal<T, typeof this>
+    signal: Signal<T, typeof this> = {} as Signal<T, typeof this>,
   ): Signal<T, typeof this> {
     const value = typeof _value === "function" ? (_value as () => T | Signal<T, Element>)() : _value;
     const depends_on = typeof _depends_on === "function" ? (_depends_on as () => Signal<any, Element>[] | undefined)() : _depends_on;
@@ -89,6 +103,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       if(!value.parent.contains(this) && value.parent != this) return spe();
 
       const _signal = this.#signal(
+        identifier,
         value.val,
         depends_on?.filter(dep => dep != value),
         signal
@@ -154,6 +169,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
         }.bind(this),
         set: function(this: ReactiveCustomElement, newValue: T){
           _d.value = newValue;
+          if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
           _d.dependants.forEach(dep => {
             if(_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
           })
@@ -161,9 +177,12 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       },
       omitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.add(dep)},
       unOmitCallback: {value: (dep: EffectCallback) => _d.omittedCallbacks.delete(dep)},
-      callDependants: {value: () => _d.dependants.forEach(dep => {
-        if(_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
-      })},
+      callDependants: {value: () => {
+          if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
+          _d.dependants.forEach(dep => {
+            if (_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
+          })
+        }},
       addDependant: {value: (dep: EffectCallback) => _d.dependants.add(dep)},
       forgetDependant: {value: (dep: EffectCallback) => {
           _d.dependants.delete(dep);
@@ -171,12 +190,36 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
         }},
       parent: {get: function(this: ReactiveCustomElement){return this}.bind(this)}
     }).forEach(([key, value]) => Object.defineProperty(signal, key, value))
+
+    if(this.debug) console.log(identifier.message);
     return signal;
   }
 
   signal<T>(value: Initializer<Signal<T, Element> | T>, depends_on?: Initializer<Signal<any, Element>[]>) : Signal<T, typeof this> {
+    // want to get line where signal was called, to easily identify it on debug
+    let identifier: SignalIdentifier = {message: "debug is disabled on component, set debug to true to enable it"};
+    if(this.debug){
+      const {lineNumber: line, fileName: file, columnNumber: col} = StackTrace.getSync()[1];
+      if(!file || !line || !col) identifier.message = "could not get file or line number";
+      else {
+        identifier.fromFile = file;
+        identifier.fromLine = line;
+        identifier.fromColumn = col;
+        identifier.message = `signal called at ${file}:${line}:${col}`;
+        identifier.component = this.constructor.name;
+        identifier.var_name = "fetching var name..."
+        fetch(file).then(res => res.text()).then(text => {
+          const lines = text.split("\n");
+          const lineText = lines[line - 1].substring(0, col);
+          let spl = lineText.split("=");
+          if (spl.length >= 2) identifier.var_name = /^.*?(?<var>\w+)$/.exec(spl[spl.length - 2].trim())?.groups?.var;
+          else identifier.var_name = "could not get var name"
+        })
+      }
+    }
+
     const e = (): never => {
-      throw new Error("Signal not initialized yet, wait for init() to be called")
+      throw new Error("Signal not initialized yet, wait for connect() to be called")
     };
     const signal = {
       get val(){return e()},
@@ -186,14 +229,15 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       forgetDependant(_: EffectCallback) {e()},
       omitCallback(_: EffectCallback) {e()},
       unOmitCallback(_: EffectCallback) {e()},
-      get parent(){return e()}
+      get parent(){return e()},
+      identifier: identifier
     } as Signal<T, typeof this>
 
     if(this._ccc) {
-      this.#signal(value, depends_on, signal);
+      this.#signal(identifier, value, depends_on, signal);
     } else {
       this._sti.push(() => {
-        this.#signal(value, depends_on, signal);
+        this.#signal(identifier, value, depends_on, signal);
       })
     }
 
@@ -202,10 +246,13 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
 
   // ts-ignore => this value is used by the browser
   private connectedCallback(){
+    if(this.debug) console.warn("Debug is enabled on component", this.constructor.name, "it may slow down the application, and spam the console");
     this._ccc = true;
     this._sti.forEach(signal => signal());
+    if(this.debug) console.log("signals initialized for" , this.constructor.name);
     this.connect();
     const els = this.render();
+    if(this.debug) console.log("rendered", els.length, "element(s) for", this.constructor.name);
     els.forEach(el => this.appendChild(el));
     this.postRender(els);
 
@@ -213,7 +260,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       for(const mut of muts)
         for(const node of mut.removedNodes)
           if (node._be) {
-            if(window["rce_verbose" as any]) console.log("forgetting effects registration for: ", node, node._be);
+            if(this.debug) console.log("forgetting effects registration for: ", node, node._be);
             this.forgetEffectsRegistration(node._be);
           }
     });
@@ -332,6 +379,10 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
       }
       this.effect(_eff);
       if(!(parent instanceof HTMLElement)) return Object.values(els);
+      else {
+        parent._be ||= [];
+        parent._be.push(_eff);
+      }
     }else if(desc === undefined || desc === null || desc === false){
       // do nothing avoid toString() to be called on undefined
     }else if(typeof desc !== "object"){

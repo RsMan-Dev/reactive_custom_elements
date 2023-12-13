@@ -29,6 +29,7 @@
   },
   "homepage": "https://github.com/RsMan-Dev/reactive_custom_elements#readme",
   "dependencies": {
+    "stacktrace-js": "^2.0.2",
     "typescript": "^5.2.2"
   }
 }
