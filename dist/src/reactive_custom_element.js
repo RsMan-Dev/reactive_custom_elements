@@ -4,10 +4,14 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
     return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 var _ReactiveCustomElement_instances, _ReactiveCustomElement_signal;
 Object.defineProperty(exports, "__esModule", { value: true });
 const tag_helper_1 = require("./tag_helper");
 require("./jsx");
+const stacktrace_js_1 = __importDefault(require("stacktrace-js"));
 // noinspection JSUnusedLocalSymbols, JSUnusedGlobalSymbols used when overriding, or by browser
 class ReactiveCustomElement extends HTMLElement {
     constructor() {
@@ -17,8 +21,11 @@ class ReactiveCustomElement extends HTMLElement {
         this._ccc = false;
         // signals to init when connected callback is called
         this._sti = [];
+        // disposed
+        this._d = false;
         // signal clear effect callbacks, used to clear an effect from signal effects
         this._scea = [];
+        this.debug = false;
     }
     static tag(tagName, attrs = {}, ...children) { return (0, tag_helper_1.tag)(tagName, attrs, ...children); }
     forgetEffectsRegistration(callbacks) {
@@ -39,41 +46,73 @@ class ReactiveCustomElement extends HTMLElement {
         this._cec = undefined;
     }
     signal(value, depends_on) {
+        // want to get line where signal was called, to easily identify it on debug
+        let identifier = { message: "debug is disabled on component, set debug to true to enable it" };
+        if (this.debug) {
+            const { lineNumber: line, fileName: file, columnNumber: col } = stacktrace_js_1.default.getSync()[1];
+            if (!file || !line || !col)
+                identifier.message = "could not get file or line number";
+            else {
+                identifier.fromFile = file;
+                identifier.fromLine = line;
+                identifier.fromColumn = col;
+                identifier.message = `signal called at ${file}:${line}:${col}`;
+                identifier.component = this.constructor.name;
+                identifier.var_name = "fetching var name...";
+                fetch(file).then(res => res.text()).then(text => {
+                    const lines = text.split("\n");
+                    const lineText = lines[line - 1].substring(0, col);
+                    let spl = lineText.split("=");
+                    if (spl.length >= 2)
+                        identifier.var_name = /^.*?(?<var>\w+)$/.exec(spl[spl.length - 2].trim())?.groups?.var;
+                    else
+                        identifier.var_name = "could not get var name";
+                });
+            }
+        }
         const e = () => {
-            throw new Error("Signal not initialized yet, wait for init() to be called");
+            throw new Error("Signal not initialized yet, wait for connect() to be called");
         };
         const signal = {
             get val() { return e(); },
             set val(_) { e(); },
             callDependants() { e(); },
             addDependant(_) { e(); },
+            forgetDependant(_) { e(); },
             omitCallback(_) { e(); },
             unOmitCallback(_) { e(); },
-            get parent() { return e(); }
+            get parent() { return e(); },
+            identifier: identifier
         };
         if (this._ccc) {
-            __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value, depends_on, signal);
+            __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, identifier, value, depends_on, signal);
         }
         else {
             this._sti.push(() => {
-                __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value, depends_on, signal);
+                __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, identifier, value, depends_on, signal);
             });
         }
         return signal;
     }
     // ts-ignore => this value is used by the browser
     connectedCallback() {
+        if (this.debug)
+            console.warn("Debug is enabled on component", this.constructor.name, "it may slow down the application, and spam the console");
         this._ccc = true;
         this._sti.forEach(signal => signal());
+        if (this.debug)
+            console.log("signals initialized for", this.constructor.name);
         this.connect();
         const els = this.render();
+        if (this.debug)
+            console.log("rendered", els.length, "element(s) for", this.constructor.name);
         els.forEach(el => this.appendChild(el));
         this.postRender(els);
         this._mo = new MutationObserver((muts) => {
             for (const mut of muts)
                 for (const node of mut.removedNodes)
                     if (node._be) {
-                        if (window["rce_verbose"])
+                        if (this.debug)
                             console.log("forgetting effects registration for: ", node, node._be);
                         this.forgetEffectsRegistration(node._be);
                     }
@@ -82,6 +121,10 @@ class ReactiveCustomElement extends HTMLElement {
     }
     // ts-ignore => this value is used by the browser
     disconnectedCallback() {
+        this._d = true;
+        this.forgetEffectsRegistration(this._be || []);
+        this._mo.disconnect();
+        this._scea.length = 0;
         this.disconnect();
     }
     disconnect() { }
@@ -94,11 +137,12 @@ class ReactiveCustomElement extends HTMLElement {
             const _eff = () => {
                 const res = desc();
                 if (Array.isArray(res)) {
-                    for (const el of res) {
+                    const resNoFalse = res.filter(el => el !== false);
+                    for (const el of resNoFalse) {
                         if (!el.key)
                             throw new Error("Array of elements into a function must have a key as the number of elements may change");
                     }
-                    const allKeys = res.map(el => el.key.toString());
+                    const allKeys = resNoFalse.map(el => el.key.toString());
                     for (const key of Object.keys(els)) {
                         if (!allKeys.includes(key)) {
                             if (els[key]._be)
@@ -107,7 +151,7 @@ class ReactiveCustomElement extends HTMLElement {
                             delete els[key];
                         }
                     }
-                    for (const el of res) {
+                    for (const el of resNoFalse) {
                         const isBeforeKey = allKeys[allKeys.indexOf(el.key.toString()) + 1];
                         const isAfterKey = allKeys[allKeys.indexOf(el.key.toString()) - 1];
                         if (!els[el.key]) {
@@ -149,7 +193,7 @@ class ReactiveCustomElement extends HTMLElement {
                         }
                     }
                 }
-                else if (res === undefined || res === null) {
+                else if (res === undefined || res === null || res === false) {
                     for (const key of Object.keys(els)) {
                         if (els[key]._be)
                             this.forgetEffectsRegistration(els[key]._be);
@@ -198,8 +242,12 @@ class ReactiveCustomElement extends HTMLElement {
             this.effect(_eff);
             if (!(parent instanceof HTMLElement))
                 return Object.values(els);
+            else {
+                parent._be || (parent._be = []);
+                parent._be.push(_eff);
+            }
         }
-        else if (desc === undefined || desc === null) {
+        else if (desc === undefined || desc === null || desc === false) {
             // do nothing avoid toString() to be called on undefined
         }
         else if (typeof desc !== "object") {
@@ -227,7 +275,7 @@ class ReactiveCustomElement extends HTMLElement {
                     }
                     if (typeof value === "function") {
                         const _attr_eff = () => {
-                            el.setAttribute(key, value(undefined)?.toString() || "");
+                            this.setElAttr(el, key, value(undefined)?.toString());
                             el._be || (el._be = []);
                             el._be.push(_attr_eff);
                         };
@@ -244,8 +292,28 @@ class ReactiveCustomElement extends HTMLElement {
                 return [el];
         }
     }
+    setElAttr(el, attr, value) {
+        if (attr == "checked") {
+            const is = ![undefined, "false", "0", "null", "undefined", false, 0, null].includes(value);
+            if (is) {
+                el.setAttribute(attr, "");
+                if (attr in el)
+                    el[attr] = true;
+            }
+            else {
+                el.removeAttribute(attr);
+                if (attr in el)
+                    el[attr] = false;
+            }
+            return;
+        }
+        if (value === undefined || value === null)
+            el.removeAttribute(attr);
+        else
+            el.setAttribute(attr, value);
+    }
 }
-_ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal = function _ReactiveCustomElement_signal(_value, _depends_on, signal = {}) {
+_ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal = function _ReactiveCustomElement_signal(identifier, _value, _depends_on, signal = {}) {
     const value = typeof _value === "function" ? _value() : _value;
     const depends_on = typeof _depends_on === "function" ? _depends_on() : _depends_on;
     const spe = () => { throw new Error("Signal parent must contain or be the signal child to avoid memory leaks"); };
@@ -259,7 +327,7 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         'unOmitCallback' in value) {
         if (!value.parent.contains(this) && value.parent != this)
             return spe();
-        const _signal = __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, value.val, depends_on?.filter(dep => dep != value), signal);
+        const _signal = __classPrivateFieldGet(this, _ReactiveCustomElement_instances, "m", _ReactiveCustomElement_signal).call(this, identifier, value.val, depends_on?.filter(dep => dep != value), signal);
         const cb = () => {
             _signal.omitCallback(rcb);
             _signal.val = value.val;
@@ -272,11 +340,15 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         };
         value.addDependant(cb);
         _signal.addDependant(rcb);
+        this._scea.push((cb) => {
+            value.forgetDependant(cb);
+            _signal.forgetDependant(rcb);
+        });
         this._be || (this._be = []);
         this._be.push(cb);
         return _signal;
     }
-    const _data = {
+    const _d = {
         value: value,
         dependants: new Set(),
         omittedCallbacks: new Set(),
@@ -291,37 +363,53 @@ _ReactiveCustomElement_instances = new WeakSet(), _ReactiveCustomElement_signal 
         const cb = () => { signal.val = _value(); };
         for (const dep of depends_on)
             dep.addDependant(cb);
+        this._scea.push((cb) => {
+            for (const dep of depends_on)
+                dep.forgetDependant(cb);
+        });
         this._be || (this._be = []);
         this._be.push(cb);
     }
     this._scea.push((cb) => {
-        _data.dependants.delete(cb);
-        _data.omittedCallbacks.delete(cb);
+        _d.dependants.delete(cb);
+        _d.omittedCallbacks.delete(cb);
     });
     Object.entries({
         val: {
             get: function () {
                 if (this._cec)
-                    _data.dependants.add(this._cec);
-                return _data.value;
+                    _d.dependants.add(this._cec);
+                return _d.value;
             }.bind(this),
             set: function (newValue) {
-                _data.value = newValue;
-                _data.dependants.forEach(dep => {
-                    if (_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep))
+                _d.value = newValue;
+                if (this.debug)
+                    console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
+                _d.dependants.forEach(dep => {
+                    if (_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep))
                         dep();
                 });
             }.bind(this)
         },
-        omitCallback: { value: (dep) => _data.omittedCallbacks.add(dep) },
-        unOmitCallback: { value: (dep) => _data.omittedCallbacks.delete(dep) },
-        callDependants: { value: () => _data.dependants.forEach(dep => {
-                if (_data.omittedCallbacks.size == 0 || !_data.omittedCallbacks.has(dep))
-                    dep();
-            }) },
-        addDependant: { value: (dep) => _data.dependants.add(dep) },
+        omitCallback: { value: (dep) => _d.omittedCallbacks.add(dep) },
+        unOmitCallback: { value: (dep) => _d.omittedCallbacks.delete(dep) },
+        callDependants: { value: () => {
+                if (this.debug)
+                    console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
+                _d.dependants.forEach(dep => {
+                    if (_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep))
+                        dep();
+                });
+            } },
+        addDependant: { value: (dep) => _d.dependants.add(dep) },
+        forgetDependant: { value: (dep) => {
+                _d.dependants.delete(dep);
+                _d.omittedCallbacks.delete(dep);
+            } },
         parent: { get: function () { return this; }.bind(this) }
     }).forEach(([key, value]) => Object.defineProperty(signal, key, value));
+    if (this.debug)
+        console.log(identifier.message);
     return signal;
 };
 exports.default = ReactiveCustomElement;

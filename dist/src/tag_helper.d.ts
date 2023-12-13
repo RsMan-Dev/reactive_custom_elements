@@ -16,10 +16,10 @@ export type TagDescriptor<K extends ElementTagName, Children extends ChildrenIni
     tag: K;
     attrs?: AttributeMap;
     children: Children;
-};
-export type TagDescriptorWithKey<K extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]> = TagDescriptor<K, Children> & {
+} | false;
+export type TagDescriptorWithKey<K extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]> = Exclude<TagDescriptor<K, Children>, false> & {
     key: string | number;
-};
+} | false;
 export type StringOrTagDescriptor<T extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[]> = TagDescriptor<T, Children> | string;
 export type ChildrenInitializer<T extends ElementTagName> = TagDescriptorInitializer<T> | ArrayOr<StringOrTagDescriptor<T, ChildrenInitializer<ElementTagName>[]>>;
 export declare function tag<K extends ElementTagName, Children extends ChildrenInitializer<ElementTagName>[], Key extends string | undefined = undefined>(tag: K, attrs?: KeyedAttributeMap<Key> | null, ...children: [...Children]): Key extends string ? TagDescriptorWithKey<K, Children> : TagDescriptor<K, Children>;
