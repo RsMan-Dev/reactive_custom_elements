@@ -69,9 +69,8 @@ class MyElement extends ReactiveCustomElement {
 }
 ```
 Signals can work together with other signals, to avoid declaring effects at any time.
-using the second argument of `this.signal()` to provide dependencies. dependencies can be
-signals from the same element, or signals from parent elements, but not signals from other
-elements, to avoid potential memory leaks.
+`this.signal()` can take a function as argument, the function will be wrapped in an effect,
+so when a depending signal is updated, the function will be called, and the signal will be updated.
 
 Example:
 ```js
@@ -79,7 +78,7 @@ import ReactiveCustomElement from 'reactive_custom_elements';
 class MyElement extends ReactiveCustomElement {
     count = this.signal(0);
     count2 = this.signal(0);
-    count3 = this.signal(() => this.count.val + this.count2.val, [this.count, this.count2]);
+    count3 = this.signal(() => this.count.val + this.count2.val);
     connected() {
         console.log(this.count3.val); // 0
         this.count.val = 1;

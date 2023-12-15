@@ -5,24 +5,14 @@ import {
   AttributeMap,
   Initializer,
   ArrayOr,
-  TagDescriptor, TagDescriptorWithKey
+  TagDescriptorWithKey
 } from "./tag_helper";
 import "./jsx"
-import StackTrace from "stacktrace-js";
+import { currEffect, effect } from "./classes/effect";
+import Signal, {signal, SignalIdentifier} from "./classes/signal";
 
-type EffectCallback = () => (void | (() => void));
+export type EffectCallback = () => (void | (() => void));
 
-
-export type Signal<T, P extends Element> = {
-  val: T,
-  callDeps: () => void,
-  addDep: (dep: EffectCallback) => void,
-  forgetDep: (dep: EffectCallback) => void,
-  omitDep: (dep: EffectCallback) => void,
-  unOmitDep: (dep: EffectCallback) => void,
-  get parent(): P,
-  identifier: SignalIdentifier
-}
 declare global{
   interface Node{
     // bound effects
@@ -30,28 +20,17 @@ declare global{
   }
 }
 
-type SignalIdentifier = {
-  message: string,
-  var_name?: string,
-  component?: string,
-  fromFile?: string,
-  fromLine?: number,
-  fromColumn?: number,
-}
-
 // noinspection JSUnusedLocalSymbols, JSUnusedGlobalSymbols used when overriding, or by browser
 export default abstract class ReactiveCustomElement extends HTMLElement{
   // observed attributes
   private observedAttributes?: string[];
-  // current effect callback
-  private _cec?: EffectCallback;
   // connected callback called
   private _ccc = false;
   // signals to init when connected callback is called
   private _sti: (() => void)[] = [];
   // disposed
   private _d = false;
-  // mutation observer to clear effects when node is removed
+  // mutation observer to clear effects when node is removed, and track attribute changes
   _mo!: MutationObserver;
   // signal clear effect callbacks, used to clear an effect from signal effects
   _scea: ((cb: EffectCallback) => void)[] = [];
@@ -72,181 +51,26 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
   
   // bind effect to node if any
   _beia(node: Node){
-    if(this._cec) {
+    if(currEffect()) {
       node._be ||= []
-      node._be.push(this._cec)
+      node._be.push(currEffect()!)
     }
   }
 
-  effect(callback: EffectCallback){
-    this._cec = callback;
-    callback();
-    this._cec = undefined;
+  effect(cb: EffectCallback){
+    effect(() => {
+      this._beia(this);
+      cb();
+    });
   }
 
-  #signal<T>(
-    identifier: SignalIdentifier,
-    _value: Initializer<Signal<T, Element> | T>,
-    _depends_on?: Initializer<Signal<any, Element>[]>,
-    signal: Signal<T, typeof this> = {} as Signal<T, typeof this>,
-  ): Signal<T, typeof this> {
-    const value = typeof _value === "function" ? (_value as () => T | Signal<T, Element>)() : _value;
-    const depends_on = typeof _depends_on === "function" ? (_depends_on as () => Signal<any, Element>[] | undefined)() : _depends_on;
-    const spe = ():never => {throw new Error("Signal parent must contain or be the signal child to avoid memory leaks")}
+  signal<T>(value: Initializer<Signal<T, ReactiveCustomElement> | T>) : Signal<T, typeof this> {
+    const _signal = signal(value, this);
 
-    // if value is a signal for example, a signal from a parent component
-    if(
-      value != null &&
-      typeof value == 'object' &&
-      'val' in value &&
-      'callDeps' in value &&
-      'addDep' in value &&
-      'omitDep' in value &&
-      'unOmitDep' in value
-    ) {
-      if(!value.parent.contains(this) && value.parent != this) return spe();
+    this._scea.push(_signal.forgetDep.bind(_signal));
+    this._sti.push(_signal.init.bind(_signal));
 
-      const _signal = this.#signal(
-        identifier,
-        value.val,
-        depends_on?.filter(dep => dep != value),
-        signal
-      );
-
-      const cb = () => {
-        _signal.omitDep(rcb);
-        _signal.val = value.val;
-        _signal.unOmitDep(rcb);
-      }
-      const rcb = () => {
-        value.omitDep(cb);
-        value.val = _signal.val;
-        value.unOmitDep(cb);
-      }
-      value.addDep(cb);
-      _signal.addDep(rcb);
-
-      this._scea.push((cb: EffectCallback) => {
-        value.forgetDep(cb);
-        _signal.forgetDep(rcb);
-      })
-
-      this._be ||= [];
-      this._be.push(cb);
-
-      return _signal;
-    }
-
-    const _d = {
-      value: value,
-      dependants: new Set<EffectCallback>(),
-      omittedCallbacks: new Set<EffectCallback>(),
-    }
-
-    if(depends_on){
-      if(typeof _value !== "function") throw new Error("depends_on can only be used with a function initializer")
-      for(const dep of depends_on){
-        if(!dep.parent.contains(this) && dep.parent != this) return spe();
-      }
-      const cb = () => {signal.val = (_value as () => T)();}
-
-      for(const dep of depends_on) dep.addDep(cb);
-
-      this._scea.push((cb: EffectCallback) => {
-        for(const dep of depends_on) dep.forgetDep(cb);
-      })
-
-      this._be ||= [];
-      this._be.push(cb);
-    }
-
-    this._scea.push((cb: EffectCallback) => {
-      _d.dependants.delete(cb);
-      _d.omittedCallbacks.delete(cb);
-    })
-
-    Object.entries({
-      val: {
-        get: function(this: ReactiveCustomElement){
-          if (this._cec) _d.dependants.add(this._cec);
-          return _d.value;
-        }.bind(this),
-        set: function(this: ReactiveCustomElement, newValue: T){
-          if(_d.value === newValue) return;
-          _d.value = newValue;
-          if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
-          _d.dependants.forEach(dep => {
-            if(_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
-          })
-        }.bind(this)
-      },
-      omitDep: {value: (dep: EffectCallback) => _d.omittedCallbacks.add(dep)},
-      unOmitDep: {value: (dep: EffectCallback) => _d.omittedCallbacks.delete(dep)},
-      callDeps: {value: () => {
-          if(this.debug) console.log(identifier.component, "=>", identifier.var_name, "- data:", _d.omittedCallbacks.size, _d);
-          _d.dependants.forEach(dep => {
-            if (_d.omittedCallbacks.size == 0 || !_d.omittedCallbacks.has(dep)) dep();
-          })
-        }},
-      addDep: {value: (dep: EffectCallback) => _d.dependants.add(dep)},
-      forgetDep: {value: (dep: EffectCallback) => {
-          _d.dependants.delete(dep);
-          _d.omittedCallbacks.delete(dep);
-        }},
-      parent: {get: function(this: ReactiveCustomElement){return this}.bind(this)}
-    }).forEach(([key, value]) => Object.defineProperty(signal, key, value))
-
-    if(this.debug) console.log(identifier.message);
-    return signal;
-  }
-
-  signal<T>(value: Initializer<Signal<T, Element> | T>, depends_on?: Initializer<Signal<any, Element>[]>) : Signal<T, typeof this> {
-    // want to get line where signal was called, to easily identify it on debug
-    let identifier: SignalIdentifier = {message: "debug is disabled on component, set debug to true to enable it"};
-    if(this.debug){
-      const {lineNumber: line, fileName: file, columnNumber: col} = StackTrace.getSync()[1];
-      if(!file || !line || !col) identifier.message = "could not get file or line number";
-      else {
-        identifier.fromFile = file;
-        identifier.fromLine = line;
-        identifier.fromColumn = col;
-        identifier.message = `signal called at ${file}:${line}:${col}`;
-        identifier.component = this.constructor.name;
-        identifier.var_name = "fetching var name..."
-        fetch(file).then(res => res.text()).then(text => {
-          const lines = text.split("\n");
-          const lineText = lines[line - 1].substring(0, col);
-          let spl = lineText.split("=");
-          if (spl.length >= 2) identifier.var_name = /^.*?(?<var>\w+)$/.exec(spl[spl.length - 2].trim())?.groups?.var;
-          else identifier.var_name = "could not get var name"
-        })
-      }
-    }
-
-    const e = (): never => {
-      throw new Error("Signal not initialized yet, wait for connect() to be called")
-    };
-    const signal = {
-      get val(){return e()},
-      set val(_: T) {e()},
-      callDeps() {e()},
-      addDep(_: EffectCallback) {e()},
-      forgetDep(_: EffectCallback) {e()},
-      omitDep(_: EffectCallback) {e()},
-      unOmitDep(_: EffectCallback) {e()},
-      get parent(){return e()},
-      identifier: identifier
-    } as Signal<T, typeof this>
-
-    if(this._ccc) {
-      this.#signal(identifier, value, depends_on, signal);
-    } else {
-      this._sti.push(() => {
-        this.#signal(identifier, value, depends_on, signal);
-      })
-    }
-
-    return signal;
+    return _signal;
   }
 
   attribute<T extends any = string | undefined | null>(
@@ -284,6 +108,17 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
     if(this._ccc) { _i() } else { this._sti.push(_i) }
 
     return s;
+  }
+
+  //used to map multiple children without loosing data from closure #test version
+  map<T, R>(arr: () => T[], cb: (v: () => T, i: number) => R) : () => R[]{
+    return () => {
+      const tr: R[] = []
+      for(let i = 0; i < arr().length; i++){
+        tr.push(cb(() => arr()[i], i))
+      }
+      return tr
+    }
   }
 
   // ts-ignore => this value is used by the browser
@@ -429,7 +264,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
           }
         }
       }
-      this.effect(_eff);
+      effect(_eff);
       if(!(parent instanceof HTMLElement)) return Object.values(els);
       else {
         parent._be ||= [];
@@ -464,7 +299,7 @@ export default abstract class ReactiveCustomElement extends HTMLElement{
               el._be ||= [];
               el._be.push(_attr_eff)
             }
-            this.effect(_attr_eff)
+            effect(_attr_eff)
           } else el.setAttribute(key, value?.toString() || "")
         })
 
